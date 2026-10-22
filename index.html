@@ -277,7 +277,7 @@ const db = {
       return a;
     }
     let q = sb.from(TBL[k]).select("*");
-    q = k==="clientes"||k==="sistemas" ? q.order("nome") : q.order("created_at",{ascending:false});
+    q = k==="clientes"||k==="sistemas" ? q.order("nome") : q.order(k==="preparos"?"updated_at":"created_at",{ascending:false});
     const {data,error} = await q; if (error) throw error; return data||[];
   },
   async ins(k,row){
