@@ -85,7 +85,8 @@ main{flex:1;min-width:0;padding:16px 20px 90px}
 .demo-bar{background:#0f2a22;border:1px solid #1f5c48;color:var(--mint2);border-radius:10px;padding:7px 11px;font-size:11.5px;margin-bottom:12px}
 #bottom{display:none}
 
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+.card.click{cursor:pointer;transition:border-color .15s} .card.click:hover{border-color:#1f5c48}
 .card{background:var(--s1);border:1px solid var(--line);border-radius:var(--r);padding:12px 13px}
 .card .l{font-size:11px;color:var(--mu)} .card .v{font-size:20px;font-weight:800;margin-top:2px}
 .card .d{font-size:10.5px;color:var(--mu2)}
@@ -230,13 +231,13 @@ const hrs = n => String(Math.round((Number(n)||0)*100)/100).replace(".",",")+" h
 const desde = d => { const m=Math.floor((Date.now()-new Date(d))/60000); if(m<60) return m+" min"; if(m<1440) return Math.floor(m/60)+" h"; return Math.floor(m/1440)+" d"; };
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id"+Math.random().toString(36).slice(2)+Date.now());
 const clone = o => JSON.parse(JSON.stringify(o));
-function toast(t){ const el=document.createElement("div"); el.className="toast"; el.textContent=t; document.body.appendChild(el); setTimeout(()=>el.remove(),2800); }
+function toast(t){ document.querySelectorAll(".toast").forEach(x=>x.remove()); const el=document.createElement("div"); el.className="toast"; el.textContent=t; document.body.appendChild(el); setTimeout(()=>el.remove(),2800); }
 
 const CFG = window.MC_CONFIG || {};
 const PRAZO = CFG.prazo || "até 2 dias úteis";
 // status interno → como o cliente vê
-const CL = {recebido:"Recebido", preparando:"Em produção", aguardando_ok:"Em produção", ajustar:"Em produção", aguardando_cliente:"Precisamos de uma informação", no_ar:"Pronto · no ar", orcamento:"Orçamento", recusado:"Não é possível"};
-const IN = {recebido:"Novo", preparando:"Claude preparando", aguardando_ok:"Para o seu OK", ajustar:"Ajustando", aguardando_cliente:"Aguardando cliente", no_ar:"No ar", orcamento:"Orçamento", recusado:"Recusado"};
+const CL = {recebido:"Recebido", preparando:"Em produção", aguardando_ok:"Em produção", aprovado:"Em produção", ajustar:"Em produção", aguardando_cliente:"Precisamos de uma informação", no_ar:"Pronto · no ar", orcamento:"Orçamento", recusado:"Não é possível"};
+const IN = {recebido:"Novo", preparando:"Claude preparando", aguardando_ok:"Para o seu OK", aprovado:"Aprovado · publicar", ajustar:"Ajustando", aguardando_cliente:"Aguardando cliente", no_ar:"No ar", orcamento:"Orçamento", recusado:"Recusado"};
 const FECHADOS = ["no_ar","orcamento","recusado"];
 const FX = {
   verde:{t:"Verde · ajuste simples", m:"Ajuste simples. Você recebe retorno "+PRAZO+"."},
@@ -257,7 +258,7 @@ function triagem(tipo, texto){
 
 /* ================= dados ================= */
 let sb = null, MODE = null;
-const S = { user:null, perfil:null, clientes:[], sistemas:[], pedidos:[], preparos:[], hist:[], perfis:[], view:null, tab:"ok", tabCli:"abertos", filtroCli:"", preparando:{} };
+const S = { user:null, perfil:null, clientes:[], sistemas:[], pedidos:[], preparos:[], hist:[], perfis:[], view:null, tab:"ok", tabAuto:true, tabCli:"abertos", filtroCli:"", preparando:{} };
 const DEMO = { clientes:[], sistemas:[], pedidos:[], preparos:[], hist:[], perfis:[] };
 const TBL = { clientes:"mc_clientes", sistemas:"mc_sistemas", pedidos:"mc_pedidos", preparos:"mc_preparos", hist:"mc_hist", perfis:"mc_perfis" };
 const KEY = { perfis:"user_id", preparos:"pedido_id" };
@@ -449,7 +450,7 @@ const NAV_C = [{k:"meus", ic:"◎", t:"Meus pedidos"}];
 const nomeCli = id => S.clientes.find(c=>c.id===id)?.nome || "—";
 const nomeSis = id => S.sistemas.find(s=>s.id===id)?.nome || "—";
 const prepDe = id => S.preparos.find(x=>x.pedido_id===id);
-const horasMes = cid => S.pedidos.filter(p=>p.cliente_id===cid && (p.concluido_at||p.updated_at||"").slice(0,7)===mesAtual()).reduce((s,p)=>s+Number(p.horas||0),0);
+const horasMes = cid => S.pedidos.filter(p=>p.cliente_id===cid && FECHADOS.includes(p.status) && (p.concluido_at||"").slice(0,7)===mesAtual()).reduce((s,p)=>s+Number(p.horas||0),0);
 
 function render(){
   if (!S.perfil) return;
@@ -459,7 +460,7 @@ function render(){
     return;
   }
   const nav = ehM() ? NAV_M : NAV_C;
-  const nOk = S.pedidos.filter(p=>p.status==="aguardando_ok").length;
+  const nOk = S.pedidos.filter(p=>["aguardando_ok","aprovado"].includes(p.status)).length;
   const nAsk = S.pedidos.filter(p=>p.status==="aguardando_cliente").length;
   const nPend = S.perfis.filter(p=>p.papel==="pendente").length;
   const badge = k => { const n = k==="fila" ? nOk : k==="meus" ? nAsk : k==="usuarios" ? nPend : 0; return n?`<span class="badge">${n}</span>`:""; };
@@ -509,20 +510,24 @@ function ultimaPergunta(pid){ const x = S.hist.filter(e=>e.pedido_id===pid && e.
 function vFila(){
   const grupos = {
     ok:{t:"Para o seu OK", f:p=>p.status==="aguardando_ok"},
+    publicar:{t:"Para publicar", f:p=>p.status==="aprovado"},
     novos:{t:"Novos / em preparo", f:p=>["recebido","preparando","ajustar"].includes(p.status)},
     cliente:{t:"Aguardando cliente", f:p=>p.status==="aguardando_cliente"},
     feitos:{t:"Concluídos", f:p=>FECHADOS.includes(p.status)},
     todos:{t:"Todos", f:()=>true}
   };
+  const cnt = k => S.pedidos.filter(grupos[k].f).length;
+  if (S.tabAuto) S.tab = cnt("ok") ? "ok" : cnt("publicar") ? "publicar" : cnt("novos") ? "novos" : "ok";
   let arr = S.pedidos.filter(grupos[S.tab].f);
   if (S.filtroCli) arr = arr.filter(p=>p.cliente_id===S.filtroCli);
-  const totH = S.pedidos.filter(p=>(p.concluido_at||"").slice(0,7)===mesAtual()).reduce((s,p)=>s+Number(p.horas||0),0);
+  const totH = S.pedidos.filter(p=>FECHADOS.includes(p.status) && (p.concluido_at||"").slice(0,7)===mesAtual()).reduce((s,p)=>s+Number(p.horas||0),0);
   $("#view").innerHTML = `
     <div class="cards">
-      <div class="card hl"><div class="l">Para o seu OK</div><div class="v">${S.pedidos.filter(grupos.ok.f).length}</div><div class="d">preparados pelo Claude</div></div>
-      <div class="card"><div class="l">Novos / em preparo</div><div class="v">${S.pedidos.filter(grupos.novos.f).length}</div><div class="d">chegando na fila</div></div>
-      <div class="card"><div class="l">Aguardando cliente</div><div class="v">${S.pedidos.filter(grupos.cliente.f).length}</div><div class="d">perguntas enviadas</div></div>
-      <div class="card"><div class="l">Horas no mês</div><div class="v">${hrs(totH)}</div><div class="d">${S.pedidos.filter(p=>p.status==="no_ar"&&(p.concluido_at||"").slice(0,7)===mesAtual()).length} ajustes no ar</div></div>
+      <div class="card hl click" data-act="tab" data-v="ok"><div class="l">Para o seu OK</div><div class="v">${cnt("ok")}</div><div class="d">preparados pelo Claude</div></div>
+      <div class="card click" data-act="tab" data-v="publicar"><div class="l">Para publicar</div><div class="v">${cnt("publicar")}</div><div class="d">aprovados, falta subir</div></div>
+      <div class="card click" data-act="tab" data-v="novos"><div class="l">Novos / em preparo</div><div class="v">${cnt("novos")}</div><div class="d">chegando na fila</div></div>
+      <div class="card click" data-act="tab" data-v="cliente"><div class="l">Aguardando cliente</div><div class="v">${cnt("cliente")}</div><div class="d">perguntas enviadas</div></div>
+      <div class="card click" data-act="tab" data-v="feitos"><div class="l">Horas no mês</div><div class="v">${hrs(totH)}</div><div class="d">${S.pedidos.filter(p=>p.status==="no_ar"&&(p.concluido_at||"").slice(0,7)===mesAtual()).length} ajustes no ar</div></div>
     </div>
     <div class="row" style="margin-bottom:10px"><div class="tabs" style="margin:0">${Object.entries(grupos).map(([k,g])=>`<button class="tab ${S.tab===k?"on":""}" data-act="tab" data-v="${k}">${g.t}</button>`).join("")}</div>
       <span style="flex:1"></span><select class="in" id="filtroCli" style="max-width:220px"><option value="">Todos os clientes</option>${S.clientes.map(c=>`<option value="${c.id}" ${S.filtroCli===c.id?"selected":""}>${h(c.nome)}</option>`).join("")}</select></div>
@@ -531,9 +536,9 @@ function vFila(){
         <td><b>${h(p.titulo)}</b><div class="small muted">${h(nomeCli(p.cliente_id))} · ${h(nomeSis(p.sistema_id))}${p.urgencia&&p.urgencia!=="Normal"?` · <span style="color:var(--rose)">${h(p.urgencia)}</span>`:""}</div>
         ${pr?.resumo&&p.status==="aguardando_ok"?`<div class="small" style="color:var(--mint2);margin-top:3px">✦ ${h(pr.resumo.slice(0,140))}${pr.resumo.length>140?"…":""}</div>`:""}</td>
         <td>${fx?`<span class="fx ${fx}">${fx}</span>`:""}${pr?.mexe_banco?` <span class="chip red" title="Mexe no banco">banco</span>`:""}</td>
-        <td><span class="chip ${p.status==="aguardando_ok"?"hot":p.status==="aguardando_cliente"?"ask":""}">${S.preparando[p.id]||p.status==="preparando"?'<span class="spin"></span> ':""}${IN[p.status]}</span></td>
+        <td><span class="chip ${p.status==="aguardando_ok"?"hot":p.status==="aprovado"?"ask":p.status==="aguardando_cliente"?"ask":""}">${S.preparando[p.id]||p.status==="preparando"?'<span class="spin"></span> ':""}${IN[p.status]}</span></td>
         <td class="hide-m small muted num">${desde(p.updated_at||p.created_at)}</td></tr>`; }).join("")}
-    </tbody></table></div>`:`<div class="empty">${S.tab==="ok"?"Nada esperando o seu OK. 🎉":"Nada aqui."}</div>`}</div>`;
+    </tbody></table></div>`:`<div class="empty">${S.tab==="ok"?"Nada esperando o seu OK. 🎉":S.tab==="publicar"?"Nada aprovado esperando publicação.":"Nada aqui."}</div>`}</div>`;
 }
 function vClientes(){
   $("#view").innerHTML = `<div class="row" style="margin-bottom:10px"><span class="muted small">${S.clientes.length} clientes · ${S.sistemas.length} sistemas</span><span style="flex:1"></span><button class="btn sec" data-act="sisEditar">＋ Sistema</button><button class="btn pri" data-act="cliEditar">＋ Cliente</button></div>
@@ -676,7 +681,7 @@ function ver(id){
     modal(`#${p.numero} · ${h(p.titulo)}`, `<div class="row"><span class="chip ${p.status==="aguardando_ok"?"hot":""}">${IN[p.status]}</span>${fx?`<span class="fx ${fx}">${FX[fx].t}</span>`:""}<span class="small muted">${h(nomeCli(p.cliente_id))} · ${h(nomeSis(p.sistema_id))} · ${h(p.autor_nome||"")} · ${dt(p.created_at)}</span></div>
       <div style="margin-top:10px">${info}</div>
       ${prepBox(p,pr)}
-      ${FECHADOS.includes(p.status)?`<div class="box"><b class="t">Concluído: ${IN[p.status]}</b>${p.horas!=null?"Horas: "+hrs(p.horas):""} <button class="btn ghost sm" data-act="reabrir" data-id="${id}">Reabrir</button></div>`:decisao(p,pr)}
+      ${FECHADOS.includes(p.status)?`<div class="box"><b class="t">Concluído: ${IN[p.status]}</b>${p.horas!=null?"Horas: "+hrs(p.horas):""} <button class="btn ghost sm" data-act="reabrir" data-id="${id}">Reabrir</button></div>`:p.status==="aprovado"?publicarBox(p,pr):decisao(p,pr)}
       ${tl}`, "", {wide:true});
   }
   MOD.dirty=false; MOD.verId=id;
@@ -698,21 +703,30 @@ function prepBox(p,pr){
 }
 function decisao(p,pr){
   return `<div class="f"><label>Sua decisão</label><div class="dec">
-    <button class="btn pri" data-act="dec" data-v="ok" data-id="${p.id}">✓ OK — publicar</button>
+    <button class="btn pri" data-act="dec" data-v="ok" data-id="${p.id}">✓ OK — aprovar</button>
     <button class="btn sec" data-act="dec" data-v="ajustar" data-id="${p.id}">↺ Pedir ajuste</button>
     <button class="btn yel" data-act="dec" data-v="perguntar" data-id="${p.id}">? Perguntar ao cliente</button>
     <button class="btn org" data-act="dec" data-v="orcamento" data-id="${p.id}">$ Orçamento</button>
     <button class="btn warn" data-act="dec" data-v="recusar" data-id="${p.id}">✕ Não é possível</button></div>
     <div id="decBox"></div></div>`;
 }
+function publicarBox(p,pr){
+  pr = pr || {};
+  return `<div class="decbox" style="border-color:#6b5a14"><b>✓ Aprovado — falta publicar</b>
+    <div class="small muted" style="margin:4px 0 10px">O cliente continua vendo “Em produção”. 1) Copie a instrução e execute no Claude · 2) suba (index.html → GitHub, SQL → Supabase) · 3) confira no sistema e marque como no ar.</div>
+    <div class="row" style="margin-bottom:10px"><button class="btn sec sm" data-act="copiarExec" data-id="${p.id}">⧉ Copiar instrução de execução</button>${pr.link_previa?`<a class="btn sec sm" href="${h(pr.link_previa)}" target="_blank" rel="noopener">Abrir prévia ↗</a>`:""}</div>
+    ${pick("horas","Horas a lançar no plano", p.horas!=null?String(p.horas).replace(".",","):"", ["0,25","0,5","1","2","4"],{num:true, ph:"Outro"})}
+    <div class="f"><label>Mensagem ao cliente (enviada agora, junto com “Pronto · no ar”)</label><textarea class="in" name="msg" style="min-height:60px">${h(pr.resposta_cliente||"Pronto! O seu ajuste já está no ar.")}</textarea></div>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost sm" data-act="voltarOk" data-id="${p.id}">↺ Voltar para o OK</button><button class="btn pri" data-act="noAr" data-id="${p.id}">✓ Está no ar — avisar cliente</button></div></div>`;
+}
 function abrirDecisao(id, tipo){
   const p=S.pedidos.find(x=>x.id===id), pr=prepDe(id)||{};
   const box=$("#decBox");
   const cfg = {
-    ok:{t:"Publicar e avisar o cliente", body:`${pick("faixa","Faixa", p.faixa||pr.faixa||p.faixa_sugerida||"", ["verde","amarelo","laranja","vermelho"],{noField:true})}
+    ok:{t:"Aprovar — o cliente continua vendo “Em produção” até você publicar", body:`${pick("faixa","Faixa", p.faixa||pr.faixa||p.faixa_sugerida||"", ["verde","amarelo","laranja","vermelho"],{noField:true})}
       ${pick("horas","Horas a lançar no plano", pr.horas_estimadas!=null?String(pr.horas_estimadas).replace(".",","):"", ["0,25","0,5","1","2","4"],{num:true, ph:"Outro"})}
-      <div class="f"><label>Mensagem ao cliente</label><textarea class="in" name="msg" style="min-height:60px">${h(pr.resposta_cliente||"Pronto! O seu ajuste já está no ar.")}</textarea></div>
-      ${pr.mexe_banco?`<div class="box vermelho small"><b class="t">⚠ Este ajuste mexe no banco</b>Confira o SQL antes de publicar.</div>`:""}`, btn:"Confirmar e publicar"},
+      <div class="f"><label>Mensagem ao cliente (vai só quando você marcar “no ar”)</label><textarea class="in" name="msg" style="min-height:60px">${h(pr.resposta_cliente||"Pronto! O seu ajuste já está no ar.")}</textarea></div>
+      ${pr.mexe_banco?`<div class="box vermelho small"><b class="t">⚠ Este ajuste mexe no banco</b>Confira o SQL antes de publicar.</div>`:""}`, btn:"Aprovar"},
     ajustar:{t:"O que o Claude deve mudar na preparação?", body:`<textarea class="in" name="msg" placeholder="Ex.: em vez de vermelho, use o laranja da marca; e só para delivery."></textarea>`, btn:"Pedir ajuste ao Claude"},
     perguntar:{t:"Pergunta para o cliente", body:`<textarea class="in" name="msg">${h((pr.perguntas||[]).join(" "))}</textarea>`, btn:"Enviar pergunta"},
     orcamento:{t:"Mensagem ao cliente (orçamento)", body:`<textarea class="in" name="msg">${h(pr.faixa==="laranja"&&pr.resposta_cliente?pr.resposta_cliente:"Seu pedido é uma funcionalidade nova. Vamos preparar um orçamento e enviar em breve.")}</textarea>`, btn:"Enviar como orçamento"},
@@ -727,9 +741,11 @@ async function confirmarDecisao(id, tipo){
     if (tipo==="ok"){
       const faixa=fv("faixa")||null, h_=fv("horas")?num(fv("horas")):null;
       if (h_===null) return erro("horas","Informe as horas a lançar (pode ser 0).");
-      if (msg) await db.ins("hist",{pedido_id:id, evento:"Mensagem da MINTESS", detalhe:msg, interno:false});
-      await db.upd("pedidos",id,{status:"no_ar", faixa, horas:h_});
-      toast("Publicado ✓ — cliente avisado");
+      await db.upsertPrep({pedido_id:id, resposta_cliente:msg||null});
+      await db.upd("pedidos",id,{status:"aprovado", faixa, horas:h_});
+      await db.ins("hist",{pedido_id:id, evento:"Aprovado pelo Tae", detalhe:"Falta publicar.", interno:true});
+      fecharModal(true); await carregar(); render(); ver(id);
+      toast("Aprovado ✓ — publique e depois marque como no ar"); return;
     } else if (tipo==="ajustar"){
       if (!msg) return erro("msg","Diga o que ajustar.");
       await db.upsertPrep({pedido_id:id, nota_tae:msg});
@@ -826,7 +842,7 @@ const ACT = {
   recarregar: ()=>location.reload(),
   menu: ()=>$("#side").classList.toggle("open"),
   go: el=>{ if (MOD) fecharModal(true); S.view=el.dataset.v; $("#side").classList.remove("open"); render(); scrollTo(0,0); },
-  tab: el=>{ S.tab=el.dataset.v; render(); },
+  tab: el=>{ S.tab=el.dataset.v; S.tabAuto=false; render(); },
   tabCli: el=>{ S.tabCli=el.dataset.v; render(); },
   fechar: ()=>fecharModal(),
   pedidoNovo: ()=>{ $("#side").classList.remove("open"); pedidoNovo(); },
@@ -839,7 +855,18 @@ const ACT = {
   dec: el=>abrirDecisao(el.dataset.id, el.dataset.v),
   decCancelar: ()=>{ $("#decBox").innerHTML=""; },
   decConfirmar: el=>confirmarDecisao(el.dataset.id, el.dataset.v),
-  reabrir: async el=>{ try{ await db.upd("pedidos",el.dataset.id,{status:"aguardando_ok"}); await carregar(); ver(el.dataset.id); render(); }catch(e){ toast("Erro: "+(e.message||e)); } },
+  reabrir: async el=>{ const id=el.dataset.id, p=S.pedidos.find(x=>x.id===id), pr=prepDe(id);
+    const st = p?.status==="no_ar" && pr?.preparado_at ? "aprovado" : "aguardando_ok";
+    try{ await db.upd("pedidos",id,{status:st}); await db.ins("hist",{pedido_id:id, evento:"Reaberto", detalhe:st==="aprovado"?"Voltou para publicação.":"Voltou para o OK.", interno:true}); await carregar(); ver(id); render(); }catch(e){ toast("Erro: "+(e.message||e)); } },
+  voltarOk: async el=>{ const id=el.dataset.id; try{ await db.upd("pedidos",id,{status:"aguardando_ok"}); await carregar(); ver(id); render(); }catch(e){ toast("Erro: "+(e.message||e)); } },
+  noAr: async el=>{ const id=el.dataset.id, msg=fv("msg"), hv=fv("horas");
+    if (!hv) return erro("horas","Informe as horas a lançar (pode ser 0).");
+    el.disabled=true;
+    try{
+      if (msg) await db.ins("hist",{pedido_id:id, evento:"Mensagem da MINTESS", detalhe:msg, interno:false});
+      await db.upd("pedidos",id,{status:"no_ar", horas:num(hv)});
+      fecharModal(true); await carregar(); render(); toast("No ar ✓ — cliente avisado");
+    }catch(e){ el.disabled=false; toast("Erro: "+(e.message||e)); } },
   comentar: async el=>{ const t=$("#comTxt").value.trim(); if(!t) return toast("Escreva a mensagem.");
     const interno = el.dataset.v==="int";
     try{ await db.ins("hist",{pedido_id:el.dataset.id, evento: ehM()?(interno?"Nota interna":"Mensagem da MINTESS"):"Comentário", detalhe:t, interno}); await carregar(); ver(el.dataset.id); render(); toast(interno?"Nota salva":"Mensagem enviada"); }
