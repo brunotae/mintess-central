@@ -293,6 +293,12 @@ const db = {
     if (MODE==="demo"){ const e=DEMO.preparos.find(x=>x.pedido_id===row.pedido_id); if(e) Object.assign(e,row,{updated_at:new Date().toISOString()}); else DEMO.preparos.push(Object.assign({plano:[],perguntas:[]},row)); return clone(DEMO.preparos.find(x=>x.pedido_id===row.pedido_id)); }
     const {data,error} = await sb.from("mc_preparos").upsert(row).select().single(); if (error) throw error; return data;
   },
+  async git(body){
+    if (MODE==="demo") return demoGit(body);
+    const {data,error} = await sb.functions.invoke("mintess-git",{body});
+    if (error){ let m=error.message; try{ const j=await error.context?.json?.(); m=j?.erro||j?.error||m; }catch{} return {ok:false, erro:m}; }
+    return data||{ok:false};
+  },
   async preparar(pedido_id, nota){
     if (MODE==="demo") return demoPreparar(pedido_id, nota);
     const {data,error} = await sb.functions.invoke("mintess-preparar",{body:{pedido_id, nota:nota||null}});
@@ -350,6 +356,25 @@ async function demoPreparar(pid, nota){
   return {ok:true};
 }
 
+async function demoGit(b){
+  const p = DEMO.pedidos.find(x=>x.id===b.pedido_id); if (!p) return {ok:false, erro:"Pedido não encontrado"};
+  const s = DEMO.sistemas.find(x=>x.id===p.sistema_id) || {};
+  if (b.acao==="executar"){
+    const br = "pedido-"+p.numero, dom = (s.previa_dominio||((s.repo||"app").split("/").pop()+".pages.dev"));
+    await db.upsertPrep({pedido_id:p.id, exec_status:"executando", exec_branch:br, exec_erro:null, exec_resumo:null, exec_sql:null, exec_at:new Date().toISOString(), link_previa:`https://${br}.${dom}`});
+    demoHist(p.id,"Execução iniciada","Branch "+br,true,"Claude");
+    setTimeout(async ()=>{ await db.upsertPrep({pedido_id:p.id, exec_status:"pronto", exec_resumo:"(demonstração) A mudança foi aplicada no branch "+br+". Abra a prévia para conferir.", exec_sha:"abc1234"}); demoHist(p.id,"Prévia pronta","Mudança aplicada.",true,"Claude"); await carregar(); if (MOD?.verId===p.id) ver(p.id); else if (!MOD) render(); }, 2500);
+    return {ok:true};
+  }
+  if (b.acao==="publicar"){
+    if (b.msg) demoHist(p.id,"Mensagem da MINTESS",b.msg,false);
+    demoUpd("pedidos",p.id,{status:"no_ar", horas:num(b.horas), faixa:b.faixa||p.faixa});
+    await db.upsertPrep({pedido_id:p.id, exec_status:"publicado"});
+    return {ok:true};
+  }
+  return {ok:false, erro:"Ação inválida"};
+}
+
 async function carregar(){
   if (!["cliente","mintess"].includes(S.perfil?.papel)) return;
   try{
@@ -393,7 +418,7 @@ function montarDemo(){
     {id:"c2", nome:"Café Seoul (fictício)", contato:"Ana", plano_horas:2, ativo:true, obs:"", created_at:m(80000)}
   ];
   DEMO.sistemas = [
-    {id:"s1", cliente_id:"c1", nome:"Topoki ERP", url:"https://topoki.mintess.com.br", repo:"mintess/topoki", modelo:"Fechado", telas:"Hoje, Pedidos, Cozinha, Cardápio, Clientes, Caixa, Equipe", descricao_tecnica:"PWA de restaurante coreano, index.html único + Supabase (tpk_).", ativo:true},
+    {id:"s1", cliente_id:"c1", nome:"Topoki ERP", url:"https://topoki.mintess.com.br", repo:"mintess/topoki", modelo:"Fechado", telas:"Hoje, Pedidos, Cozinha, Cardápio, Clientes, Caixa, Equipe", descricao_tecnica:"PWA de restaurante coreano, index.html único + Supabase (tpk_).", previa_dominio:"topoki.pages.dev", branch_base:"main", auto:true, ativo:true},
     {id:"s2", cliente_id:"c2", nome:"Café Seoul Pedidos", url:"https://cafeseoul.mintess.com.br", repo:"mintess/cafe-seoul", modelo:"Híbrido", telas:"Pedidos, Estoque, Caixa", descricao_tecnica:"PWA de cafeteria; Supabase na conta do cliente.", ativo:true}
   ];
   DEMO.perfis = [
@@ -536,7 +561,7 @@ function vFila(){
         <td><b>${h(p.titulo)}</b><div class="small muted">${h(nomeCli(p.cliente_id))} · ${h(nomeSis(p.sistema_id))}${p.urgencia&&p.urgencia!=="Normal"?` · <span style="color:var(--rose)">${h(p.urgencia)}</span>`:""}</div>
         ${pr?.resumo&&p.status==="aguardando_ok"?`<div class="small" style="color:var(--mint2);margin-top:3px">✦ ${h(pr.resumo.slice(0,140))}${pr.resumo.length>140?"…":""}</div>`:""}</td>
         <td>${fx?`<span class="fx ${fx}">${fx}</span>`:""}${pr?.mexe_banco?` <span class="chip red" title="Mexe no banco">banco</span>`:""}</td>
-        <td><span class="chip ${p.status==="aguardando_ok"?"hot":p.status==="aprovado"?"ask":p.status==="aguardando_cliente"?"ask":""}">${S.preparando[p.id]||p.status==="preparando"?'<span class="spin"></span> ':""}${IN[p.status]}</span></td>
+        <td><span class="chip ${p.status==="aguardando_ok"?"hot":p.status==="aprovado"?"ask":p.status==="aguardando_cliente"?"ask":""}">${S.preparando[p.id]||p.status==="preparando"?'<span class="spin"></span> ':""}${IN[p.status]}</span>${pr?.exec_status==="executando"?' <span class="chip"><span class="spin"></span> executando</span>':pr?.exec_status==="pronto"?' <span class="chip hot">prévia ✓</span>':pr?.exec_status==="erro"?' <span class="chip red">execução falhou</span>':""}</td>
         <td class="hide-m small muted num">${desde(p.updated_at||p.created_at)}</td></tr>`; }).join("")}
     </tbody></table></div>`:`<div class="empty">${S.tab==="ok"?"Nada esperando o seu OK. 🎉":S.tab==="publicar"?"Nada aprovado esperando publicação.":"Nada aqui."}</div>`}</div>`;
 }
@@ -697,13 +722,29 @@ function prepBox(p,pr){
     <div class="row" style="margin-bottom:8px">${pr.faixa?`<span class="fx ${pr.faixa}">${pr.faixa}</span>`:""}${pr.mexe_banco?'<span class="chip red">⚠ mexe no banco</span>':'<span class="chip">sem banco</span>'}<span class="chip">risco ${h(pr.risco||"—")}</span><span class="chip">≈ ${hrs(pr.horas_estimadas)}</span></div>
     ${(pr.plano||[]).length?`<div class="small muted">Plano</div><ol class="small">${pr.plano.map(x=>`<li>${h(x)}</li>`).join("")}</ol>`:""}
     ${(pr.perguntas||[]).length?`<div class="box ask small"><b class="t">Falta informação do cliente</b>${pr.perguntas.map(x=>"• "+h(x)).join("<br>")}</div>`:""}
+    ${execBox(p,pr)}
     <div class="f"><label>Link da prévia</label><div class="row"><input class="in" id="linkPrev" value="${h(pr.link_previa||"")}" placeholder="https://…" style="flex:1">${pr.link_previa?`<a class="btn sec sm" href="${h(pr.link_previa)}" target="_blank" rel="noopener">Abrir ↗</a>`:""}<button class="btn ghost sm" data-act="salvarLink" data-id="${p.id}">Salvar</button></div></div>
     <details><summary class="small muted" style="cursor:pointer">Instrução de execução (para o Claude Code)</summary><pre>${h(pr.prompt_execucao||"—")}</pre><button class="btn sec sm" data-act="copiarExec" data-id="${p.id}">⧉ Copiar instrução</button></details>
     <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="preparar" data-id="${p.id}">↻ Preparar de novo</button></div></div>`;
 }
+const travado = pr => pr?.exec_status==="executando" && pr.exec_at && (Date.now()-new Date(pr.exec_at)) > 35*60000;
+function execBox(p,pr){
+  const s = S.sistemas.find(x=>x.id===p.sistema_id) || {};
+  const st = pr?.exec_status;
+  if (!s.repo && !st) return `<div class="small muted" style="margin-bottom:8px">Execução automática: cadastre o repositório deste sistema em Clientes e sistemas.</div>`;
+  if (st==="executando" && travado(pr)) return `<div class="box vermelho"><b class="t">⚠ A execução não respondeu há mais de 35 min</b><div class="small muted">Pode ter sido cancelada ou o GitHub não iniciou. Confira o log ou execute de novo.</div><div class="row" style="margin-top:6px"><button class="btn sec sm" data-act="executar" data-id="${p.id}">↻ Executar de novo</button>${pr.exec_run_url?`<a class="btn ghost sm" href="${h(pr.exec_run_url)}" target="_blank" rel="noopener">Log ↗</a>`:""}</div></div>`;
+  if (st==="executando") return `<div class="box" style="border-color:#1f5c48"><b class="t"><span class="spin"></span> Claude executando no GitHub…</b><span class="small muted">Branch ${h(pr.exec_branch||"")} · leva de 2 a 8 minutos. A tela atualiza sozinha.</span>${pr.exec_run_url?` · <a class="small" href="${h(pr.exec_run_url)}" target="_blank" rel="noopener">ver log ↗</a>`:""} · <a href="#" class="small" data-act="executar" data-id="${p.id}">executar de novo</a></div>`;
+  if (st==="pronto") return `<div class="box verde"><b class="t">✓ Prévia pronta${pr.exec_branch?` · ${h(pr.exec_branch)}`:""}</b>${pr.exec_resumo?`<div style="white-space:pre-wrap;margin-bottom:6px">${h(pr.exec_resumo)}</div>`:""}
+    <div class="row">${pr.link_previa?`<a class="btn pri sm" href="${h(pr.link_previa)}" target="_blank" rel="noopener">Abrir prévia ↗</a>`:`<span class="small muted">Sem domínio de prévia cadastrado no sistema.</span>`}${pr.exec_run_url?`<a class="btn ghost sm" href="${h(pr.exec_run_url)}" target="_blank" rel="noopener">Log ↗</a>`:""}<button class="btn ghost sm" data-act="executar" data-id="${p.id}">↻ Executar de novo</button></div>
+    <div class="small muted" style="margin-top:6px">A prévia pode levar ~1 min para aparecer depois de pronta. Ela usa os dados reais do sistema.</div>
+    ${pr.exec_sql?`<div class="box vermelho small" style="margin-top:8px"><b class="t">⚠ Precisa rodar este SQL no Supabase antes de publicar</b><pre>${h(pr.exec_sql)}</pre><button class="btn sec sm" data-act="copiarSql" data-id="${p.id}">⧉ Copiar SQL</button></div>`:""}</div>`;
+  if (st==="erro") return `<div class="box vermelho"><b class="t">✕ A execução falhou</b><div class="small" style="white-space:pre-wrap">${h(pr.exec_erro||"")}</div><div class="row" style="margin-top:6px"><button class="btn sec sm" data-act="executar" data-id="${p.id}">↻ Executar de novo</button>${pr.exec_run_url?`<a class="btn ghost sm" href="${h(pr.exec_run_url)}" target="_blank" rel="noopener">Log ↗</a>`:""}</div></div>`;
+  if (st==="publicado") return `<div class="box"><b class="t">✓ Publicado no site oficial</b><span class="small muted">${h(pr.exec_branch||"")} → ${h(s.branch_base||"main")}</span></div>`;
+  return `<div class="row" style="margin-bottom:10px"><button class="btn sec sm" data-act="executar" data-id="${p.id}">▶ Executar e gerar prévia</button><span class="small muted">${s.auto?"(automático ligado)":"O Claude aplica a mudança num branch separado."}</span></div>`;
+}
 function decisao(p,pr){
   return `<div class="f"><label>Sua decisão</label><div class="dec">
-    <button class="btn pri" data-act="dec" data-v="ok" data-id="${p.id}">✓ OK — aprovar</button>
+    ${pr?.exec_status==="pronto"?`<button class="btn pri" data-act="dec" data-v="publicar" data-id="${p.id}">✓ OK — publicar</button>`:`<button class="btn pri" data-act="dec" data-v="ok" data-id="${p.id}">✓ OK — aprovar${S.sistemas.find(x=>x.id===p.sistema_id)?.repo?" (sem prévia)":""}</button>`}
     <button class="btn sec" data-act="dec" data-v="ajustar" data-id="${p.id}">↺ Pedir ajuste</button>
     <button class="btn yel" data-act="dec" data-v="perguntar" data-id="${p.id}">? Perguntar ao cliente</button>
     <button class="btn org" data-act="dec" data-v="orcamento" data-id="${p.id}">$ Orçamento</button>
@@ -727,6 +768,11 @@ function abrirDecisao(id, tipo){
       ${pick("horas","Horas a lançar no plano", pr.horas_estimadas!=null?String(pr.horas_estimadas).replace(".",","):"", ["0,25","0,5","1","2","4"],{num:true, ph:"Outro"})}
       <div class="f"><label>Mensagem ao cliente (vai só quando você marcar “no ar”)</label><textarea class="in" name="msg" style="min-height:60px">${h(pr.resposta_cliente||"Pronto! O seu ajuste já está no ar.")}</textarea></div>
       ${pr.mexe_banco?`<div class="box vermelho small"><b class="t">⚠ Este ajuste mexe no banco</b>Confira o SQL antes de publicar.</div>`:""}`, btn:"Aprovar"},
+    publicar:{t:"Publicar no site oficial e avisar o cliente", body:`${pick("faixa","Faixa", p.faixa||pr.faixa||p.faixa_sugerida||"", ["verde","amarelo","laranja","vermelho"],{noField:true})}
+      ${pick("horas","Horas a lançar no plano", pr.horas_estimadas!=null?String(pr.horas_estimadas).replace(".",","):"", ["0,25","0,5","1","2","4"],{num:true, ph:"Outro"})}
+      <div class="f"><label>Mensagem ao cliente</label><textarea class="in" name="msg" style="min-height:60px">${h(pr.resposta_cliente||"Pronto! O seu ajuste já está no ar.")}</textarea></div>
+      ${pr.exec_sql?pick("sqlok","SQL do banco","",["Já rodei o SQL no Supabase"],{noField:true}):""}
+      <div class="small muted">O branch ${h(pr.exec_branch||"")} entra no site oficial. O Cloudflare publica em ~1 min.</div>`, btn:"Publicar agora"},
     ajustar:{t:"O que o Claude deve mudar na preparação?", body:`<textarea class="in" name="msg" placeholder="Ex.: em vez de vermelho, use o laranja da marca; e só para delivery."></textarea>`, btn:"Pedir ajuste ao Claude"},
     perguntar:{t:"Pergunta para o cliente", body:`<textarea class="in" name="msg">${h((pr.perguntas||[]).join(" "))}</textarea>`, btn:"Enviar pergunta"},
     orcamento:{t:"Mensagem ao cliente (orçamento)", body:`<textarea class="in" name="msg">${h(pr.faixa==="laranja"&&pr.resposta_cliente?pr.resposta_cliente:"Seu pedido é uma funcionalidade nova. Vamos preparar um orçamento e enviar em breve.")}</textarea>`, btn:"Enviar como orçamento"},
@@ -738,7 +784,15 @@ function abrirDecisao(id, tipo){
 async function confirmarDecisao(id, tipo){
   const msg = fv("msg");
   try{
-    if (tipo==="ok"){
+    if (tipo==="publicar"){
+      const pr = prepDe(id)||{};
+      if (!fv("horas")) return erro("horas","Informe as horas a lançar (pode ser 0).");
+      if (pr.exec_sql && !fv("sqlok")) return erro("sqlok","Rode o SQL no Supabase e marque “Já rodei o SQL”.");
+      const btn=$("#modal [data-act=decConfirmar]"); if (btn){ btn.disabled=true; btn.textContent="Publicando…"; }
+      const r = await db.git({acao:"publicar", pedido_id:id, horas:num(fv("horas")), msg, faixa:fv("faixa")||null});
+      if (!r?.ok){ if (btn){ btn.disabled=false; btn.textContent="Publicar agora"; } return toast("Não publicou: "+(r?.erro||r?.error||"erro")); }
+      toast("Publicado ✓ — no ar em ~1 min, cliente avisado");
+    } else if (tipo==="ok"){
       const faixa=fv("faixa")||null, h_=fv("horas")?num(fv("horas")):null;
       if (h_===null) return erro("horas","Informe as horas a lançar (pode ser 0).");
       await db.upsertPrep({pedido_id:id, resposta_cliente:msg||null});
@@ -799,6 +853,9 @@ function sisEditar(id, cli){
     <div class="two"><div class="f"><label>Nome do sistema <em>*</em></label><input class="in" name="nome" value="${h(s.nome||"")}"></div>
     ${pick("modelo","Modelo", s.modelo, ["Fechado","Híbrido"],{noField:true})}</div>
     <div class="two"><div class="f"><label>Endereço (URL)</label><input class="in" name="url" value="${h(s.url||"")}" placeholder="https://…"></div><div class="f"><label>Repositório</label><input class="in" name="repo" value="${h(s.repo||"")}" placeholder="mintess/nome"></div></div>
+    <div class="two"><div class="f"><label>Domínio da prévia (Cloudflare)</label><input class="in" name="previa_dominio" value="${h(s.previa_dominio||"")}" placeholder="topoki-2ab.pages.dev"></div>
+    ${pick("branch_base","Branch oficial", s.branch_base||"main", ["main","master"],{ph:"Outro"})}</div>
+    ${pick("auto","Execução automática (depois que o Claude prepara)", s.auto?"Ligada":"Desligada", ["Ligada","Desligada"],{noField:true})}
     <div class="f"><label>Telas (separadas por vírgula — viram botões no pedido)</label><input class="in" name="telas" value="${h(s.telas||"")}" placeholder="Hoje, Pedidos, Caixa"></div>
     <div class="f"><label>Contexto técnico para o Claude</label><textarea class="in" name="descricao_tecnica" placeholder="Como o sistema é feito, tabelas, papéis, padrão visual…">${h(s.descricao_tecnica||"")}</textarea></div>`,
     `<button class="btn pri" data-act="sisSalvar" data-id="${id||""}">Salvar</button>`);
@@ -806,7 +863,12 @@ function sisEditar(id, cli){
 async function sisSalvar(id){
   const nome=fv("nome"), cli=fv("cliente_id");
   if (!cli) return erro("cliente_id","Escolha o cliente."); if (!nome) return erro("nome","Informe o nome do sistema.");
-  const row={cliente_id:cli, nome, modelo:fv("modelo")||"Fechado", url:fv("url")||null, repo:fv("repo")||null, telas:fv("telas")||null, descricao_tecnica:fv("descricao_tecnica")||null};
+  const repo=fv("repo")||null;
+  if (repo && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return erro("repo","Repositório no formato organizacao/nome (ex.: mintess/topoki).");
+  const dom=(fv("previa_dominio")||"").replace(/^https?:\/\//i,"").replace(/\/+$/,"")||null;
+  if (dom && !/^[a-z0-9-]+\.pages\.dev$/i.test(dom)) return erro("previa_dominio","Use o endereço .pages.dev do Cloudflare (ex.: topoki-2ab.pages.dev).");
+  if (!/^[A-Za-z0-9_.\/-]+$/.test(fv("branch_base")||"main")) return erro("branch_base","Nome de branch inválido.");
+  const row={cliente_id:cli, nome, modelo:fv("modelo")||"Fechado", url:fv("url")||null, repo, telas:fv("telas")||null, descricao_tecnica:fv("descricao_tecnica")||null, previa_dominio:dom, branch_base:fv("branch_base")||"main", auto:fv("auto")==="Ligada"};
   try{ if (id) await db.upd("sistemas",id,row); else await db.ins("sistemas",row); fecharModal(true); await carregar(); render(); toast("Sistema salvo"); }
   catch(e){ toast("Erro: "+(e.message||e)); }
 }
@@ -851,6 +913,11 @@ const ACT = {
   preparar: el=>{ const id=el.dataset.id; prepararAuto(id, null, false); ver(id); },
   copiarPedido: el=>copiar(promptPedido(S.pedidos.find(x=>x.id===el.dataset.id)),"Pedido copiado — cole no Claude"),
   copiarExec: el=>copiar(prepDe(el.dataset.id)?.prompt_execucao||"","Instrução copiada"),
+  copiarSql: el=>copiar(prepDe(el.dataset.id)?.exec_sql||"","SQL copiado"),
+  executar: async el=>{ const id=el.dataset.id; el.disabled=true; el.textContent="Disparando…";
+    const r = await db.git({acao:"executar", pedido_id:id});
+    await carregar(); ver(id); render();
+    toast(r?.ok ? "Execução iniciada — a prévia fica pronta em alguns minutos" : "Não executou: "+(r?.erro||r?.error||"erro")); },
   salvarLink: async el=>{ try{ await db.upsertPrep({pedido_id:el.dataset.id, link_previa:$("#linkPrev").value.trim()||null}); await carregar(); toast("Link salvo"); ver(el.dataset.id); }catch(e){ toast("Erro: "+(e.message||e)); } },
   dec: el=>abrirDecisao(el.dataset.id, el.dataset.v),
   decCancelar: ()=>{ $("#decBox").innerHTML=""; },
@@ -888,6 +955,18 @@ $("#lpass").addEventListener("keydown", e=>{ if (e.key==="Enter") ACT.login(); }
 async function atualizar(){ if (MODE!=="live"||MOD||!S.perfil||S.perfil.papel==="pendente") return; await carregar(); render(); }
 document.addEventListener("visibilitychange", ()=>{ if (!document.hidden) atualizar(); });
 setInterval(atualizar, 45000);
+// enquanto o Claude prepara/executa, atualiza a cada 12 s (sem atrapalhar formulários abertos)
+setInterval(async ()=>{
+  if (!S.perfil || !ehM()) return;
+  const ativo = S.preparos.some(x=>x.exec_status==="executando" && !travado(x)) || S.pedidos.some(p=>p.status==="preparando");
+  if (!ativo) return;
+  const id = MOD?.verId;
+  if (MOD && !id) return;
+  if (MOD && (MOD.dirty || document.querySelector("#decBox .decbox") || document.activeElement?.closest?.("#modal input,#modal textarea") || $("#comTxt")?.value)) return;
+  const foto = () => JSON.stringify(id ? [S.pedidos.find(x=>x.id===id), prepDe(id)] : [S.pedidos.map(x=>[x.id,x.status]), S.preparos.map(x=>[x.pedido_id,x.exec_status])]);
+  const antes = foto(); await carregar(); if (foto()===antes) return;
+  if (id && MOD) ver(id); else if (!MOD) render();
+}, 12000);
 if ("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
 iniciarLive();
 </script>
